@@ -2,14 +2,13 @@
 /*
 ================================================================================
 --------------------------------------------------------------------------------
-      NEXTFLOW pipeline for smallRNAseq analysis
+      NEXTFLOW pipeline Bacteria Genome assemble pipeline
          provided by @zhangdongqin2@126.com 
 --------------------------------------------------------------------------------
 ================================================================================
-smallRNAseq pipeline is a quick and easy pipeline deploy on linux/Mac system.
-This pipeline is supported run on specified conda environment.
-You can use environment.yml to create a conda environment for this pipeline.
-You can run this pipeline on local conda env by < -with-conda /path/to/conda/env >
+bacDENOVO-nf pipeline is a Bacteria Genome assemble pipeline deploy on linux/Mac system.
+This pipeline is supported run on specified docker images.
+Specific docker images will automaticlly downloaded when you first run the pipeline.
 This pipeline is desiged and implement by Zhang.DQ < zhangdongqin2@126.com >
 Pipeline visualization is supported by nf-core
 ================================================================================
@@ -38,29 +37,21 @@ nextflow.enable.dsl = 2
 def helpMessage() {
     log.info nfcoreHeader()
     log.info"""
-    A Nextflow-based miRNAseq Analysis Pipeline,version:$params.version
+    A Nextflow-based Bacteria Genome assemble pipeline,version:$params.version
     Usage:
 
     The typical command for running the pipeline is as follows:
 
-    nextflow run main.nf --reads 'reads/*.fq.gz'
+    nextflow run main.nf --reads 'reads/*_{1,2}.fq.gz'
 
     Required arguments:
-      --reads          [file]           Path to input data (must be surrounded with quotes) < 'reads/*.fq.gz' >
+      --reads          [file]           Path to input data (must be surrounded with quotes) < 'reads/*_{1,2}.fq.gz' >
 
-    Optional arguments:
-      --protocol        [str]           Sequencing protocol, default is 'illumina'
-      --species         [str]           Species name of reads, default is 'hsa'
-      --hairpin        [file]           Path to hairpin microRNA fasta
-      --mature         [file]           Path to mature microRNA fasta          
-      --gtf            [path]           Path to hsa.gff3 or other species 
-      --genome         [path]           Path to reference genome fasta file 
+    Optional arguments: 
       --help            [str]           Help information for RNAseq pipeline
       --cpus            [int]           Cpu cores for pipeline , default is 6, you can specify core numbers with < --cpu 8 >
-      --bowtie_index   [path]           Path to bowtie_index,if you want to mapping smallRNA sequencing data to ref genome ,you can specify this argument
       --outdir         [path]           Path to analysis results directory ,defalut is < ./results >.
-      --salmon         [bool]           Specify use salmon quant to quantify miRNA counts
-      --genome_mapping [bool]           Defalut is true,you can specify false to skip genome mapping
+
     Other Options:
       --debug        [bool]           Flag to run only specific fusion tool/s and not the whole pipeline. Only works on tool flags.
       --outdir       [file]           The output directory where the results will be saved
@@ -326,7 +317,7 @@ process SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS {
   tuple val(sample), path("${sample}/scaffolds.fasta") , emit: scaffolds
   script:
   """
-  spades.py --careful -1 ${reads[0]} -2 ${reads[1]} -o $sample -t 12 -m 24
+  spades.py --careful -1 ${reads[0]} -2 ${reads[1]} -o $sample -t $task.cpus -m 24
   """
 }
 
@@ -338,10 +329,10 @@ process UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS {
   tuple val(sample), path (reads)
   output:
   tuple val(sample), path("${sample}") , emit: results
+  tuple val(sample), path("${sample}/assembly.fasta") , emit: contigs
   script:
-
   """
-  unicycler -1 ${reads[0]} -2 ${reads[1]} -o ${sample} -t 12
+  unicycler -1 ${reads[0]} -2 ${reads[1]} -o ${sample} -t $task.cpus
   """
 }
 
@@ -353,13 +344,60 @@ process QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_SPADES {
   tuple val(sample), path (spades_fasta)
   //tuple val(sample2), path (unicycler_fasta)
   output:
-  tuple val(sample), path("quast_out") , emit: results
+  tuple val(sample), path("${sample}") , emit: results
   script:
 
   """
-  quast -o quast_out/ -t 8 $spades_fasta 
+  quast -o ${sample}/ -t $task.cpus $spades_fasta 
   """
+}
 
+process QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_UNICYCLER {  
+  label 'quast'
+  tag "$sample"
+  publishDir "${params.outdir}/genome_assemble_reports/unicycler", mode: params.publish_dir_mode
+  input:
+  tuple val(sample), path (unicycler_fasta)
+  //tuple val(sample2), path (unicycler_fasta)
+  output:
+  tuple val(sample), path("${sample}") , emit: results
+  script:
+
+  """
+  quast -o ${sample}/ -t $task.cpus $unicycler_fasta 
+  """
+}
+
+
+
+process PROKKA_GENOME_ANNOTATION_FOR_SPADES_ASSEMBLED_CONTIGS {
+  label 'prokka'
+  tag "$sample"
+  publishDir "${params.outdir}/genome_annotation/spades", mode: params.publish_dir_mode
+
+  input:
+  tuple val(sample), path (spades_fasta)
+  output:
+  tuple val(sample), path("${sample}") , emit: results
+  script:
+  """
+  prokka $spades_fasta --outdir ${sample}
+  """
+}
+
+process PROKKA_GENOME_ANNOTATION_FOR_UNICYCLER_ASSEMBLED_CONTIGS {
+  label 'prokka'
+  tag "$sample"
+  publishDir "${params.outdir}/genome_annotation/unicycler", mode: params.publish_dir_mode
+
+  input:
+  tuple val(sample), path (unicycler_fasta)
+  output:
+  tuple val(sample), path("${sample}") , emit: results
+  script:
+  """
+  prokka $unicycler_fasta --outdir ${sample}
+  """
 }
 
 
@@ -421,10 +459,19 @@ process MULTIQC_FOR_CLEAN_READS_FASTQC_RESULTS {
 }
 
 
+workflow MULTIQC_REPORT_FOR_ALL_ANALYSIS_RESULTS {
 
+    take:
+    raw_reads_fastqc_zip
+    fastq_results 
+    clean_reads_fastqc_zip
 
+    main:
+    MULTIQC_FOR_RAW_READS_FASTQC_RESULTS ( raw_reads_fastqc_zip )
+    MULTIQC_FOR_FASTP_READS_FILTER_RESULTS ( fastq_results )
+    MULTIQC_FOR_CLEAN_READS_FASTQC_RESULTS ( clean_reads_fastqc_zip )
 
-
+}
 
 workflow GET_ALL_SOFTWARE_VERSION_FOR_BAC_ASSEMBLE_PIPELINE {
 
@@ -494,12 +541,30 @@ workflow FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS {
 workflow {
 
   GET_ALL_SOFTWARE_VERSION_FOR_BAC_ASSEMBLE_PIPELINE (  )
+
   FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS ( raw_reads )
+
   SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS ( FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.clean_reads_ch )
 
   clean_reads_for_unicycler =  FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.clean_reads_ch
 
   UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS ( clean_reads_for_unicycler )
+
   QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_SPADES ( SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS.out.contigs  )
+
+  QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_UNICYCLER ( UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS.out.contigs )
+
+  spades_contigs_for_prokka_annotation    = SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS.out.contigs
+
+  unicycler_contigs_for_prokka_annotation = UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS.out.contigs
+
+  PROKKA_GENOME_ANNOTATION_FOR_SPADES_ASSEMBLED_CONTIGS ( spades_contigs_for_prokka_annotation )
+
+  PROKKA_GENOME_ANNOTATION_FOR_UNICYCLER_ASSEMBLED_CONTIGS ( unicycler_contigs_for_prokka_annotation )
+
+  MULTIQC_REPORT_FOR_ALL_ANALYSIS_RESULTS ( FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.raw_fastqc_zip.collect{it[1]},
+                                            FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.fastp_json.collect{it[1]},
+                                            FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.clean_fastqc_zip.collect{it[1]}
+                                          )
   
 }

@@ -1,2 +1,2 @@
 # bacDENOVO-nf
- A genome assemble and annotation pipeline for bac
+ A genome assemble and annotation pipeline for bacteria

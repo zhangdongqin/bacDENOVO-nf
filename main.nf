@@ -321,10 +321,12 @@ process SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS {
   input:
   tuple val(sample), path (reads)
   output:
-  tuple val(sample), path("spades_out") , emit: results
+  tuple val(sample), path("${sample}") , emit: results
+  tuple val(sample), path("${sample}/contigs.fasta") , emit: contigs
+  tuple val(sample), path("${sample}/scaffolds.fasta") , emit: scaffolds
   script:
   """
-  spades.py --careful -1 ${reads[0]} -2 ${reads[1]} -o spades_out -t 12 -m 24
+  spades.py --careful -1 ${reads[0]} -2 ${reads[1]} -o $sample -t 12 -m 24
   """
 }
 
@@ -335,27 +337,27 @@ process UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS {
   input:
   tuple val(sample), path (reads)
   output:
-  tuple val(sample), path("unicycler_out") , emit: results
+  tuple val(sample), path("${sample}") , emit: results
   script:
 
   """
-  unicycler -1 ${reads[0]} -2 ${reads[1]} -o unicycler_out -t 12
+  unicycler -1 ${reads[0]} -2 ${reads[1]} -o ${sample} -t 12
   """
 }
 
-process QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT {  
+process QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_SPADES {  
   label 'quast'
   tag "$sample"
   publishDir "${params.outdir}/genome_assemble_reports/spades", mode: params.publish_dir_mode
   input:
   tuple val(sample), path (spades_fasta)
-  tuple val(sample), path (unicycler_fasta)
+  //tuple val(sample2), path (unicycler_fasta)
   output:
   tuple val(sample), path("quast_out") , emit: results
   script:
 
   """
-  quast -o quast_out/ -t 8 $spades_fasta $unicycler_fasta
+  quast -o quast_out/ -t 8 $spades_fasta 
   """
 
 }
@@ -494,4 +496,10 @@ workflow {
   GET_ALL_SOFTWARE_VERSION_FOR_BAC_ASSEMBLE_PIPELINE (  )
   FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS ( raw_reads )
   SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS ( FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.clean_reads_ch )
+
+  clean_reads_for_unicycler =  FASTQC_QUALITY_CHECK_AND_FASTP_READS_FILTER_FOR_RAW_READS.out.clean_reads_ch
+
+  UNICYCLER_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS ( clean_reads_for_unicycler )
+  QUAST_GENOME_ASSEMBLY_QUALITY_ASSESSMENT_FOR_SPADES ( SPADES_SEQUENCE_ASSEMBLE_FOR_FASTP_FILTED_RAW_READS.out.contigs  )
+  
 }

@@ -1,5 +1,5 @@
 # bacDENOVO-nf
- A genome assemble and annotation pipeline for bacteria
+ A genome assemble and annotation pipeline based on nextflow and docker for bacteria
 
 ## Quick Start
 1. -STEP01:
